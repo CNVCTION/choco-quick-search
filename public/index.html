@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Choco Quick Search</title>
+  <meta name="description" content="Quick search box for Chocolatey community packages">
+  <meta name="theme-color" content="#2b1a0e">
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <img src="/icons/favicon.svg" alt="" width="40" height="40">
+      <h1>Choco Quick Search</h1>
+      <span class="hint">Enter copies the install command &middot; Ctrl+O opens the package page</span>
+    </header>
+
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
+        <line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <input id="search" type="search" placeholder="Search Chocolatey packages…" autocomplete="off" spellcheck="false" autofocus>
+      <button id="clear" class="clear" type="button" aria-label="Clear search" hidden>&times;</button>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <ul id="results" class="results"></ul>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
