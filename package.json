@@ -1,0 +1,8 @@
+{
+  "name": "choco-quick-search",
+  "version": "1.0.1",
+  "private": true,
+  "description": "A lightweight Chocolatey package-search PWA",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" }
+}
