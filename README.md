@@ -1,33 +1,29 @@
 # Choco Quick Search
 
-A fast, keyboard-driven search box for [Chocolatey community packages](https://community.chocolatey.org/packages), packaged as a PWA you can run locally and install as a desktop app.
+A lightweight, self-hosted Chocolatey package finder. Search packages, open their Community Repository pages, and copy install commands.
 
-## Run it
+## Run locally
 
-Requires Node.js 18+ (no dependencies).
+Requires Node.js 20+.
 
 ```bash
 npm start
-# or: PORT=8080 node server.js
 ```
 
-Then open http://localhost:4173.
+Open http://localhost:3000.
 
-## Install as a desktop app
+## Deploy
 
-Open http://localhost:4173 in Chrome or Edge and use **Install app** (the install icon in the address bar, or menu → Cast/Save → Install). It then launches in its own window like a native app, with an offline app shell via service worker.
+This project includes a Vercel Node runtime adapter. Import the repository into Vercel and deploy from the existing default branch. For a VPS, run the Node server behind HTTPS.
 
-## Features
+To enable the included GitHub Actions deploy workflow, add repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`.
 
-- Instant, debounced search across package Id, title, and tags (top 30 results by downloads, latest versions only)
-- Package icon, version, download count, approval status, and tags per result
-- `Enter` or click copies `choco install <id> -y` to the clipboard
-- `Ctrl+O` opens the package page on community.chocolatey.org
-- `↑`/`↓` to move through results, `Esc` to clear, `/` anywhere to focus the box
-- 5-minute server-side result cache; search term is sanitized before it reaches the upstream OData API
+## Install as a PWA
 
-## How it works
+On iPhone, open the HTTPS URL in Safari → Share → Add to Home Screen. On desktop, use Chrome or Edge's Install app option.
 
-- `server.js` — zero-dependency Node server. Serves the static PWA from `public/` and proxies `/api/search` to the Chocolatey v2 OData feed (`Search()` with `$filter=IsLatestVersion`, ordered by download count), parsing the Atom XML response into JSON. A proxy is required because the upstream API sends no CORS headers, so browsers cannot call it directly.
-- `public/` — the PWA: `index.html`, `styles.css`, `app.js`, `manifest.webmanifest`, `sw.js`, icons.
-- `make_icons.py` — regenerates the PNG icons (pure stdlib, no Pillow).
+## Search integration
+
+The app queries Chocolatey's NuGet v2 OData feed. Custom direct queries are not a guaranteed supported integration surface; Chocolatey's documented supported repository query methods are Chocolatey CLI and `chocolatey.lib`. If that endpoint changes, replace the search adapter in `api/search.js` / `lib/chocolatey.js`.
+
+The app copies commands only; it does not install software on the browsing device. Run copied commands in an elevated PowerShell terminal on a Windows PC with Chocolatey installed.
