@@ -5,216 +5,53 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = process.env.PORT || 4173;
+const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const UPSTREAM_HOST = 'community.chocolatey.org';
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-};
-
+const CACHE_MS = 30_000;
 const cache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_MAX = 200;
+const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json; charset=utf-8', '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml', '.png':'image/png' };
 
-function cacheGet(key) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-  if (hit) cache.delete(key);
-  return null;
+function decodeXml(value = '') {
+  return value.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 }
-
-function cacheSet(key, value) {
-  if (cache.size >= CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    cache.delete(oldest);
-  }
-  cache.set(key, { at: Date.now(), value });
+function tag(entry, name) {
+  const re = new RegExp(`<d:${name}(?:\\s[^>]*)?>([\\s\\S]*?)</d:${name}>`, 'i');
+  return decodeXml(entry.match(re)?.[1]?.replace(/<[^>]+>/g, '').trim() || '');
 }
-
-function fetchUpstream(searchTerm, top) {
-  const query =
-    `searchTerm='${encodeURIComponent(searchTerm)}'` +
-    `&includePrerelease=false&$filter=IsLatestVersion` +
-    `&$orderby=DownloadCount%20desc&$skip=0&$top=${top}`;
-  const options = {
-    host: UPSTREAM_HOST,
-    path: `/api/v2/Search()?${query}`,
-    headers: { Accept: 'application/atom+xml, application/xml' },
-  };
+function parseEntries(xml) {
+  return [...xml.matchAll(/<entry(?:\\s[^>]*)?>([\\s\\S]*?)<\\/entry>/gi)].map(([, entry]) => {
+    const id = tag(entry, 'Id');
+    return { id, title: tag(entry, 'Title') || id, version: tag(entry, 'Version'), description: tag(entry, 'Description'), downloads: Number(tag(entry, 'DownloadCount') || 0), url: `https://community.chocolatey.org/packages/${encodeURIComponent(id)}` };
+  }).filter(p => p.id);
+}
+function json(res, status, body) { res.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff' }); res.end(JSON.stringify(body)); }
+function search(q) {
   return new Promise((resolve, reject) => {
-    const req = https.get(options, (res) => {
-      if (res.statusCode !== 200) {
-        res.resume();
-        reject(new Error(`Upstream responded ${res.statusCode}`));
-        return;
-      }
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => resolve(body));
-    });
-    req.on('error', reject);
-    req.setTimeout(10000, () => {
-      req.destroy(new Error('Upstream request timed out'));
-    });
+    const endpoint = new URL('https://community.chocolatey.org/api/v2/Search()');
+    endpoint.searchParams.set('searchTerm', `'${q.replace(/'/g, "''")}'`);
+    endpoint.searchParams.set('includePrerelease', 'false');
+    endpoint.searchParams.set('$top', '30');
+    https.get(endpoint, { headers: { Accept:'application/atom+xml, application/xml;q=0.9' } }, response => {
+      let body = ''; response.setEncoding('utf8'); response.on('data', chunk => body += chunk);
+      response.on('end', () => response.statusCode >= 200 && response.statusCode < 300 ? resolve(parseEntries(body)) : reject(new Error(`Upstream HTTP ${response.statusCode}`)));
+    }).on('error', reject).setTimeout(10000, function(){ this.destroy(new Error('Upstream timeout')); });
   });
 }
-
-function decodeXmlEntities(s) {
-  return s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
-    .replace(/&amp;/g, '&');
-}
-
-function stripTags(s) {
-  return decodeXmlEntities(s.replace(/<[^>]*>/g, '')).trim();
-}
-
-function firstMatch(s, re) {
-  const m = s.match(re);
-  return m ? m[1] : '';
-}
-
-function parseAtom(xml) {
-  const entries = [];
-  const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
-  let entryMatch;
-  while ((entryMatch = entryRe.exec(xml)) !== null) {
-    const entry = entryMatch[1];
-    const properties = {
-      Id: firstMatch(entry, /Packages\(Id='([^']*)'/) || firstMatch(entry, /<title[^>]*>([\s\S]*?)<\/title>/),
-      Summary: firstMatch(entry, /<summary[^>]*>([\s\S]*?)<\/summary>/),
-      Authors: firstMatch(entry, /<author>\s*<name[^>]*>([\s\S]*?)<\/name>/),
-    };
-    const propRe = /<d:(\w+)(?:\s[^>]*)?>([\s\S]*?)<\/d:\1>|<d:(\w+)(?:\s[^>]*)?\/>/g;
-    let propMatch;
-    while ((propMatch = propRe.exec(entry)) !== null) {
-      const name = propMatch[1] || propMatch[3];
-      const raw = propMatch[2] !== undefined ? propMatch[2] : '';
-      properties[name] = raw.includes('<') ? stripTags(raw) : decodeXmlEntities(raw);
-    }
-    entries.push(properties);
-  }
-  return entries;
-}
-
-function compareVersions(a, b) {
-  const pa = a.split(/[.\-+]/).map((x) => parseInt(x, 10) || 0);
-  const pb = b.split(/[.\-+]/).map((x) => parseInt(x, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
-function toResults(entries) {
-  const byId = new Map();
-  for (const e of entries) {
-    const id = e.Id || '';
-    if (!id) continue;
-    const existing = byId.get(id);
-    if (!existing || compareVersions(e.Version || '0', existing.Version || '0') > 0) {
-      byId.set(id, e);
-    }
-  }
-  const results = [];
-  for (const e of byId.values()) {
-    const downloads = Number(e.DownloadCount) || 0;
-    results.push({
-      id: e.Id,
-      title: e.Title || e.Id,
-      version: e.Version,
-      summary: e.Summary || '',
-      downloads,
-      iconUrl: e.IconUrl || null,
-      tags: e.Tags ? e.Tags.split(/\s+/).filter(Boolean) : [],
-      authors: e.Authors || '',
-      approved: e.IsApproved === 'true',
-      galleryUrl: e.GalleryDetailsUrl || `https://community.chocolatey.org/packages/${e.Id}`,
-      installCommand: `choco install ${e.Id} -y`,
-    });
-  }
-  results.sort((a, b) => b.downloads - a.downloads);
-  return results;
-}
-
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-  });
-  res.end(body);
-}
-
-function handleSearch(req, res, url) {
-  const q = (url.searchParams.get('q') || '').replace(/'/g, '').trim();
-  const top = Math.min(Math.max(parseInt(url.searchParams.get('top'), 10) || 30, 1), 100);
-  if (!q) {
-    sendJson(res, 200, { query: q, results: [] });
-    return;
-  }
-  const key = `${q.toLowerCase()}|${top}`;
-  const cached = cacheGet(key);
-  if (cached) {
-    sendJson(res, 200, { query: q, cached: true, results: cached });
-    return;
-  }
-  fetchUpstream(q, top)
-    .then((xml) => toResults(parseAtom(xml)))
-    .then((results) => {
-      cacheSet(key, results);
-      sendJson(res, 200, { query: q, results });
-    })
-    .catch((err) => {
-      sendJson(res, 502, { query: q, error: err.message || 'Search failed' });
-    });
-}
-
-function serveStatic(req, res, url) {
-  let pathname = decodeURIComponent(url.pathname);
-  if (pathname === '/') pathname = '/index.html';
-  const filePath = path.normalize(path.join(PUBLIC_DIR, pathname));
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    sendJson(res, 403, { error: 'Forbidden' });
-    return;
-  }
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not found');
-      return;
-    }
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
-    });
-    res.end(data);
-  });
-}
-
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/api/search') {
-    handleSearch(req, res, url);
-    return;
+    const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
+    if (q.length < 2) return json(res, 200, { results: [] });
+    if (/[<>]/.test(q)) return json(res, 400, { error: 'Please use a package name or keyword.' });
+    const key = q.toLowerCase(); const old = cache.get(key);
+    if (old && Date.now() - old.time < CACHE_MS) return json(res, 200, old.data);
+    try { const data = { results: await search(q) }; cache.set(key, {time:Date.now(),data}); if(cache.size>100) cache.delete(cache.keys().next().value); return json(res,200,data); }
+    catch { return json(res,502,{error:"Couldn't reach the Chocolatey package feed. Try again in a moment."}); }
   }
-  serveStatic(req, res, url);
+  const requested = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
+  const normalized = path.normalize(requested).replace(/^([.][.][/\\\\])+/, '').replace(/^[/\\\\]+/, '');
+  const file = path.join(PUBLIC_DIR, normalized);
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(400); return res.end('Bad path'); }
+  fs.readFile(file, (err, data) => { if (err) { res.writeHead(404); return res.end('Not found'); } res.writeHead(200, {'Content-Type':MIME[path.extname(file)] || 'application/octet-stream','X-Content-Type-Options':'nosniff'}); res.end(data); });
 });
-
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Choco Quick Search running at http://localhost:${PORT}`);
-});
+server.listen(PORT, '0.0.0.0', () => console.log(`Choco Quick Search listening on http://localhost:${PORT}`));
