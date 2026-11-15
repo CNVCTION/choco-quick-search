@@ -1,10 +1,9 @@
 {
   "name": "choco-quick-search",
-  "version": "1.0.0",
-  "description": "Quick search box for Chocolatey community packages (PWA)",
+  "version": "1.0.1",
   "private": true,
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  }
+  "type": "commonjs",
+  "description": "A lightweight Chocolatey package-search PWA",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" }
 }
