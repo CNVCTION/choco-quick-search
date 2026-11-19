@@ -12,14 +12,18 @@ const cache = new Map();
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json; charset=utf-8', '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml', '.png':'image/png' };
 
 function decodeXml(value = '') {
-  return value.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+  return value.replace(/&(amp|lt|gt|quot|apos|#(\d+)|#x([0-9a-f]+));/gi, (entity, name, decimal, hex) => {
+    if (decimal !== undefined) return String.fromCodePoint(Number(decimal));
+    if (hex !== undefined) return String.fromCodePoint(parseInt(hex, 16));
+    return { amp:'&', lt:'<', gt:'>', quot:'"', apos:"'" }[name.toLowerCase()] || entity;
+  });
 }
 function tag(entry, name) {
   const re = new RegExp(`<d:${name}(?:\\s[^>]*)?>([\\s\\S]*?)</d:${name}>`, 'i');
   return decodeXml(entry.match(re)?.[1]?.replace(/<[^>]+>/g, '').trim() || '');
 }
 function parseEntries(xml) {
-  return [...xml.matchAll(/<entry(?:\\s[^>]*)?>([\\s\\S]*?)<\\/entry>/gi)].map(([, entry]) => {
+  return [...xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map(([, entry]) => {
     const id = tag(entry, 'Id');
     return { id, title: tag(entry, 'Title') || id, version: tag(entry, 'Version'), description: tag(entry, 'Description'), downloads: Number(tag(entry, 'DownloadCount') || 0), url: `https://community.chocolatey.org/packages/${encodeURIComponent(id)}` };
   }).filter(p => p.id);
