@@ -37,7 +37,12 @@ function search(q) {
     endpoint.searchParams.set('$top', '30');
     https.get(endpoint, { headers: { Accept:'application/atom+xml, application/xml;q=0.9' } }, response => {
       let body = ''; response.setEncoding('utf8'); response.on('data', chunk => body += chunk);
-      response.on('end', () => response.statusCode >= 200 && response.statusCode < 300 ? resolve(parseEntries(body)) : reject(new Error(`Upstream HTTP ${response.statusCode}`)));
+      response.on('end', () => {
+        try {
+          if (response.statusCode >= 200 && response.statusCode < 300) resolve(parseEntries(body));
+          else reject(new Error(`Upstream HTTP ${response.statusCode}`));
+        } catch (error) { reject(error); }
+      });
     }).on('error', reject).setTimeout(10000, function(){ this.destroy(new Error('Upstream timeout')); });
   });
 }
